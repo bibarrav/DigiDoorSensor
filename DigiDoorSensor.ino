@@ -12,62 +12,53 @@ RCSwitch mySwitch = RCSwitch();
 const int switchPin = 0;
 const int ledPin = 1;
 
+// Utility macros
+#define adc_disable() (ADCSRA &= ~(1<<ADEN)) // disable ADC (before power-off)
+#define adc_enable()  (ADCSRA |=  (1<<ADEN)) // re-enable ADC
+
 // Variables for the WDT Sleep/power down modes:
 volatile boolean f_wdt = 0;
+volatile boolean f_switch = 0;
 
 void setup() {
  pinMode(switchPin, INPUT);
- pinMode(ledPin, OUTPUT);
+ //pinMode(ledPin, OUTPUT);
  digitalWrite(switchPin, HIGH);
- 
- mySwitch.enableTransmit(RF_DATA_PIN);
- // Optional set protocol (default is 1, will work for most outlets)
- // mySwitch.setProtocol(2);
-
- // Optional set pulse length.
- // mySwitch.setPulseLength(320);
-  
- // Optional set number of transmission repetitions.
- // mySwitch.setRepeatTransmit(15);
-
- setup_watchdog(8); // approximately 0.5 seconds sleep
+ adc_disable(); // ADC uses ~320uA
+ set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+ setup_watchdog(9); // approximately 0.5 seconds sleep
 }
 
 void loop() {
   if (f_wdt==1) {
-   flashLED(ledPin,200);
+   f_wdt=0;
    switch (digitalRead(switchPin)) {
     case LOW:
-      //digitalWrite(ledPin, LOW);
-      //Show status on Led
       /* See Example: TypeA_WithDIPSwitches */
       mySwitch.switchOn("11111", "00010");
-      /* Same switch as above, but using decimal code */
-      //mySwitch.send(5393, 24);
-      /* Same switch as above, but using binary code */
-      //mySwitch.send("000000000001010100010001");
-      /* Same switch as above, but tri-state code */ 
-      //mySwitch.sendTriState("00000FFF0F0F");
       break;
     case HIGH:
-      //Show status on Led
-      //digitalWrite(ledPin, HIGH);
       /* See Example: TypeA_WithDIPSwitches */
       mySwitch.switchOff("11111", "00010");
-      /* Same switch as above, but using decimal code */
-      //mySwitch.send(5396, 24);
-      /* Same switch as above, but using binary code */
-      //mySwitch.send("000000000001010100010100");
-      /* Same switch as above, but tri-state code */ 
-      //mySwitch.sendTriState("00000FFF0FF0");
       break;
     }
-    
   }
- 
+
+ if (f_switch==1) {
+   f_switch=0;
+   switch (digitalRead(switchPin)) {
+    case LOW:
+      /* See Example: TypeA_WithDIPSwitches */
+      mySwitch.switchOn("11111", "00010");
+      break;
+    case HIGH:
+      /* See Example: TypeA_WithDIPSwitches */
+      mySwitch.switchOff("11111", "00010");
+      break;
+    }
+  }
   
  sleepTillChg();
- // continue where we left off
 }
 
 void sleepTillChg() {  // 0.02ma drain while sleeping here
@@ -76,26 +67,27 @@ void sleepTillChg() {  // 0.02ma drain while sleeping here
     // Turn off unnecessary peripherals
     ADCSRA &= ~_BV(ADEN);                   // ADC off
     ACSR |= _BV(ACD); // Disable analog comparator
-
+    cli();                                  // Disable interrupts
+    digitalWrite(ledPin, LOW);  // LED off
     pinMode(ledPin, INPUT);
-
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);    // replaces above statement
+    mySwitch.disableTransmit();             //deactivate the transmitter
+//    set_sleep_mode(SLEEP_MODE_PWR_DOWN);    // replaces above statement
     sleep_enable();                         // Sets the Sleep Enable bit in the MCUCR Register (SE BIT)
+    sleep_bod_disable();
     sei();                                  // Enable interrupts
     sleep_cpu();                            // sleep ... Zzzz
-    sleep_mode();                           // System actually sleeps here
-
+    //ZZzzzzzzzzzZZZZZZzzzzzzzz --> WAKE UP!!!
     sleep_disable();                        // Clear SE bit - System continues execution here
-    cli();                                  // Disable interrupts
     PCMSK &= ~_BV(PCINT0);                  // Turn off PB0 (was PB3) as interrupt pin
     ADCSRA |= _BV(ADEN);                    // ADC on
     sei();                                  // Enable interrupts
-    
+    mySwitch.enableTransmit(RF_DATA_PIN);
     pinMode(ledPin, OUTPUT);
+    digitalWrite(ledPin, HIGH);  // LED ON
 }
 
 ISR(PCINT0_vect) {
-    // This is called when the interrupt occurs, but we don't need to do anything in it
+   f_switch = 1; // This is called when the interrupt occurs, but we don't need to do anything in it
 }
 
 void flashLED(byte ledNum, int msecs) {
@@ -112,7 +104,6 @@ void flashLED(byte ledNum, int msecs) {
 // 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
 // 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
 void setup_watchdog(int ii) {
- 
   byte bb;
   int ww;
   if (ii > 9 ) ii=9;
